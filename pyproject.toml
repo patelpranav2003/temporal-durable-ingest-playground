@@ -1,0 +1,34 @@
+[project]
+name = "temporal-durable-ingest-playground"
+version = "0.1.0"
+description = "A hands-on Temporal playground: two-stage ingest of Hacker News top stories, built to be broken on purpose."
+requires-python = ">=3.11"
+dependencies = [
+    "temporalio>=1.11.0",
+    # The only vendor dependency. In a real source repo this would live behind the shared
+    # connector library and CI would fail on a `requests` import here — see README, "How this
+    # maps to the real pipelines".
+    "requests>=2.32",
+]
+
+[project.scripts]
+durable-ingest = "durable_ingest.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=1.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/durable_ingest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The workflow tests run against Temporal's own time-skipping test server, which is async.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
