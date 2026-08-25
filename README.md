@@ -13,7 +13,7 @@ retries with backoff, fan-out, heartbeats, durability across a worker crash, sig
 and server-side schedules. Every one of those has an experiment below that you run yourself and
 watch fail.
 
-Nothing here is a toy abstraction over Temporal. It is ~1,250 lines of commented Python you can
+Nothing here is a toy abstraction over Temporal. It is ~1,150 lines of commented Python you can
 read in one sitting, and the comments explain *why* each decision is the way it is — including
 the mistakes that cost real time to diagnose the first time.
 
