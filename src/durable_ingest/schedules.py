@@ -19,7 +19,9 @@ from temporalio.client import (
     Schedule,
     ScheduleActionStartWorkflow,
     ScheduleAlreadyRunningError,
+    ScheduleCalendarSpec,
     ScheduleIntervalSpec,
+    ScheduleRange,
     ScheduleSpec,
     ScheduleState,
     ScheduleUpdate,
@@ -29,6 +31,51 @@ from . import config
 from .workflows import TopStoriesWorkflow
 
 logger = logging.getLogger(__name__)
+
+
+def _spec() -> ScheduleSpec:
+    """When the schedule fires — an interval, or one wall-clock time a day.
+
+    A ScheduleSpec's times are the UNION of its calendars, intervals and cron expressions, so
+    exactly one of them is populated here. Mixing them is legal and almost never what anyone
+    means.
+
+    The time zone matters more than it looks. A calendar spec with no `time_zone_name` is
+    evaluated by the server in UTC, so "hour 15" fires at 20:30 in India. Naming the zone also
+    means the schedule follows daylight saving, which a fixed offset cannot.
+    """
+    if config.SCHEDULE_MODE == "daily":
+        hour, _, minute = config.SCHEDULE_DAILY_AT.partition(":")
+        return ScheduleSpec(
+            calendars=[
+                ScheduleCalendarSpec(
+                    hour=[ScheduleRange(int(hour))],
+                    minute=[ScheduleRange(int(minute or 0))],
+                    # second, day_of_month, month and day_of_week keep their defaults: second 0,
+                    # and every day of every month. So this is "once a day, at that time".
+                    comment=f"daily at {config.SCHEDULE_DAILY_AT} {config.SCHEDULE_TIMEZONE}",
+                )
+            ],
+            time_zone_name=config.SCHEDULE_TIMEZONE,
+        )
+
+    if config.SCHEDULE_MODE != "interval":
+        # Fail loudly. A typo that silently fell back to a 5-minute interval would be a nasty
+        # surprise on something meant to run once a day.
+        raise ValueError(
+            f"HN_SCHEDULE_MODE must be 'interval' or 'daily', got {config.SCHEDULE_MODE!r}"
+        )
+
+    return ScheduleSpec(
+        intervals=[ScheduleIntervalSpec(every=timedelta(minutes=config.SCHEDULE_INTERVAL_MINUTES))]
+    )
+
+
+def _describe_spec() -> str:
+    """One line for a log, so the operator sees which shape they just created."""
+    if config.SCHEDULE_MODE == "daily":
+        return f"daily at {config.SCHEDULE_DAILY_AT} ({config.SCHEDULE_TIMEZONE})"
+    return f"every {config.SCHEDULE_INTERVAL_MINUTES} minutes"
 
 
 def _schedule(limit: int, batch_size: int) -> Schedule:
@@ -43,10 +90,8 @@ def _schedule(limit: int, batch_size: int) -> Schedule:
             id=f"{config.WORKFLOW_ID_PREFIX}-scheduled",
             task_queue=config.TASK_QUEUE,
         ),
-        spec=ScheduleSpec(
-            intervals=[ScheduleIntervalSpec(every=timedelta(minutes=config.SCHEDULE_INTERVAL_MINUTES))]
-        ),
-        state=ScheduleState(note="created by durable-ingest"),
+        spec=_spec(),
+        state=ScheduleState(note=f"created by durable-ingest — {_describe_spec()}"),
     )
 
 
@@ -64,9 +109,9 @@ async def create(client: Client, limit: int, batch_size: int) -> str:
         logger.info("schedule %s already exists — left as it is", config.SCHEDULE_ID)
         return "exists"
     logger.info(
-        "created schedule %s — every %d minutes",
+        "created schedule %s — %s",
         config.SCHEDULE_ID,
-        config.SCHEDULE_INTERVAL_MINUTES,
+        _describe_spec(),
     )
     return "created"
 
@@ -102,6 +147,13 @@ async def describe(client: Client) -> dict:
     desc = await client.get_schedule_handle(config.SCHEDULE_ID).describe()
     return {
         "id": config.SCHEDULE_ID,
+        # What the SERVER holds, which is not necessarily what config says now — an existing
+        # schedule keeps the spec it was created with until `schedule update`.
+        "spec": {
+            "time_zone": desc.schedule.spec.time_zone_name,
+            "calendars": [str(c) for c in desc.schedule.spec.calendars],
+            "intervals": [str(i.every) for i in desc.schedule.spec.intervals],
+        },
         "paused": desc.schedule.state.paused,
         "note": desc.schedule.state.note,
         "recent_runs": [a.started_at.isoformat() for a in desc.info.recent_actions[-5:]],

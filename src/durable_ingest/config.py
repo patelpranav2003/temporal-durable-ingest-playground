@@ -35,7 +35,21 @@ TASK_QUEUE = os.environ.get("HN_TASK_QUEUE", "durable-ingest")
 
 WORKFLOW_ID_PREFIX = os.environ.get("HN_WORKFLOW_PREFIX", "hn-top-stories")
 SCHEDULE_ID = os.environ.get("HN_SCHEDULE_ID", "hn-top-stories-every-5m")
+
+# "interval" fires every N minutes and is what a demo wants — you see several runs while you
+# watch. "daily" fires at one wall-clock time, which is what a real ingest wants.
+SCHEDULE_MODE = os.environ.get("HN_SCHEDULE_MODE", "interval").strip().lower()
+
 SCHEDULE_INTERVAL_MINUTES = int(os.environ.get("HN_SCHEDULE_INTERVAL_MINUTES", "5"))
+
+# "HH:MM", used only when SCHEDULE_MODE is "daily". Kept as a STRING here and parsed in
+# schedules.py — this module is imported into the workflow sandbox and must stay inert.
+SCHEDULE_DAILY_AT = os.environ.get("HN_SCHEDULE_AT", "15:00")
+
+# An IANA time zone name, e.g. "Asia/Kolkata", "US/Central", "UTC". The server evaluates the
+# schedule in this zone, so it follows daylight saving — which a fixed UTC offset would not.
+# WITHOUT THIS, Temporal interprets a calendar spec in UTC, and your 15:00 fires at 20:30 IST.
+SCHEDULE_TIMEZONE = os.environ.get("HN_SCHEDULE_TIMEZONE", "Asia/Kolkata")
 
 # --- the source ----------------------------------------------------------------
 

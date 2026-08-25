@@ -373,6 +373,24 @@ worker has no idea what time it is. Which means:
 Try it: `schedule create`, then stop the worker for fifteen minutes, then start it again and
 watch the queued runs drain.
 
+**Every-N-minutes vs. once a day.** The default is an interval, because a demo wants several
+runs while you watch. A real ingest usually wants a wall-clock time:
+
+```bash
+# once a day at 15:00 India time
+HN_SCHEDULE_MODE=daily HN_SCHEDULE_AT=15:00 HN_SCHEDULE_TIMEZONE=Asia/Kolkata \
+  uv run durable-ingest schedule create
+```
+
+A `ScheduleSpec`'s times are the **union** of its calendars, intervals and cron expressions, so
+`_spec()` populates exactly one of them. The zone is the part people get wrong: a calendar spec
+with no `time_zone_name` is evaluated by the server **in UTC**, so `hour=15` fires at 20:30 in
+India. Naming the zone also means the schedule follows daylight saving, which a fixed offset
+cannot.
+
+Remember `create` never overwrites. To move an existing schedule to a new time, either
+`schedule update` with the new env vars set, or `schedule delete` then `schedule create`.
+
 Note `create` is **create-only** by design. Updating a schedule replaces its state as well as
 its spec, and state includes `paused` — so a process that reconciled on every boot would
 silently un-pause a schedule someone had deliberately switched off. `schedule update` exists as
@@ -392,7 +410,10 @@ run finishes in under a minute.
 | `HN_TASK_QUEUE` | `durable-ingest` | The channel the worker polls and the workflow dispatches to. **Both sides must agree** — see experiment 7. |
 | `HN_WORKFLOW_PREFIX` | `hn-top-stories` | Prefix for generated workflow ids. |
 | `HN_SCHEDULE_ID` | `hn-top-stories-every-5m` | The schedule's id. |
-| `HN_SCHEDULE_INTERVAL_MINUTES` | `5` | How often the schedule fires. |
+| `HN_SCHEDULE_MODE` | `interval` | `interval` (every N minutes) or `daily` (one wall-clock time). An unknown value fails loudly. |
+| `HN_SCHEDULE_INTERVAL_MINUTES` | `5` | How often it fires in `interval` mode. |
+| `HN_SCHEDULE_AT` | `15:00` | `HH:MM`, used in `daily` mode. |
+| `HN_SCHEDULE_TIMEZONE` | `Asia/Kolkata` | IANA zone the server evaluates `daily` in. **Omit it and Temporal uses UTC.** |
 | `HN_BASE` | `https://hacker-news.firebaseio.com/v0` | The source API root. |
 | `HN_HTTP_TIMEOUT` | `10` | Per-request timeout, seconds. |
 | `HN_LIMIT` | `30` | Default story count. |
@@ -427,7 +448,7 @@ killing the slow-but-working case is how a healthy run gets failed.
 ## Tests
 
 ```bash
-uv run pytest -q          # 27 passed in ~5s
+uv run pytest -q          # 34 passed in ~5s
 ```
 
 No server, no network, no waiting — and that is a property of the design, not a convenience.
@@ -470,6 +491,20 @@ on a blip.
 | `NotFoundError` catchable as `SourceError` | The class hierarchy is part of the contract. |
 | Non-list work-list / non-object item → `SourceError` | Shape guards fail at the boundary instead of five steps later. |
 | The configured timeout reaches `requests.get` | A request with no timeout can hang forever, and a hung activity is worse than a failed one. |
+
+### `tests/test_schedules.py` — when it fires
+
+`_spec()` is a pure function of config, so no client and no server are needed. A wrong spec is
+the kind of bug you would otherwise discover by nobody noticing the ingest never ran.
+
+| Asserted | Why it matters |
+|---|---|
+| `daily` at `15:00` → one calendar, hour 15, minute 0, second 0 | The basic shape, and that no stray interval rides along. |
+| The IANA zone reaches `time_zone_name` | Without it the server evaluates the calendar **in UTC** — 15:00 becomes 20:30 IST. |
+| `"09:30"` parses both halves; `"15"` means on the hour | The `HH:MM` contract, including the lazy form. |
+| `day_of_month` 1-31, `month` 1-12, `day_of_week` 0-6 | These defaults are what make it *daily* rather than one single date. |
+| `interval` mode carries no calendar and no zone | An interval is a duration, not a time of day. |
+| An unknown mode raises | A typo like `dialy` must not silently fall back to firing every 5 minutes. |
 
 ---
 
@@ -611,7 +646,8 @@ burning retries.
 │   └── cli.py                  # the operator surface
 ├── tests/
 │   ├── test_workflows.py       # time-skipping env, activity doubles
-│   └── test_hn.py              # the error taxonomy, requests.get stubbed
+│   ├── test_hn.py              # the error taxonomy, requests.get stubbed
+│   └── test_schedules.py       # the schedule spec: interval vs daily, and the time zone
 ├── .github/workflows/test.yml  # pytest on 3.11 + 3.13, ruff check
 ├── _data/                      # landed JSON (gitignored)
 └── _temporal/                  # dev server db + log (gitignored)
