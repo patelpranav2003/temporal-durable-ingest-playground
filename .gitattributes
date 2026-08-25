@@ -1,0 +1,6 @@
+# Normalise line endings: LF in the repository, native in the working copy.
+* text=auto eol=lf
+
+# Never touch these.
+*.png binary
+*.db binary

@@ -1,5 +1,9 @@
 # temporal-durable-ingest-playground
 
+[![test](https://github.com/patelpranav2003/temporal-durable-ingest-playground/actions/workflows/test.yml/badge.svg)](https://github.com/patelpranav2003/temporal-durable-ingest-playground/actions/workflows/test.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 A hands-on [Temporal](https://temporal.io) playground: a two-stage ingest of Hacker News top
 stories, **built to be broken on purpose**.
 
@@ -423,10 +427,15 @@ killing the slow-but-working case is how a healthy run gets failed.
 ## Tests
 
 ```bash
-uv run pytest -q          # 7 passed in ~5s
+uv run pytest -q          # 27 passed in ~5s
 ```
 
-No server, no network, no waiting. Two things make that possible:
+No server, no network, no waiting — and that is a property of the design, not a convenience.
+CI runs the same command on 3.11 and 3.13 (`.github/workflows/test.yml`).
+
+### `tests/test_workflows.py` — the orchestration
+
+Two things make a serverless workflow test possible:
 
 1. **`WorkflowEnvironment.start_time_skipping()`** runs a real Temporal server in-process with a
    *fake clock*. Whenever every workflow is blocked on a timer, the environment fast-forwards —
@@ -443,6 +452,24 @@ What is asserted:
 | `test_a_permanently_failing_batch_degrades_the_run_instead_of_sinking_it` | The `return_exceptions=True` contract: a partial run completes and returns a summary. |
 | `test_progress_query_is_answerable_after_completion` | A query works against a **closed** workflow. |
 | `test_batch_arithmetic` | Chunking edge cases, parametrised. |
+
+### `tests/test_hn.py` — the error taxonomy
+
+`requests.get` is stubbed, because what is under test is not "can we reach Hacker News" but
+"given this response, does the caller learn the right thing about whether to retry". Get that
+classification wrong in either direction and you either hammer a dead id four times or give up
+on a blip.
+
+| Asserted | Why it matters |
+|---|---|
+| 200 + `null` body → `NotFoundError` | The vendor quirk, normalised in one place. A dead id must not burn the retry budget. |
+| `Timeout`, `ConnectionError`, 5xx → `TransientError` | Nothing about the request was wrong; retry. |
+| 429 → `TransientError` with `retry_after` parsed | When a server says how long to wait, believe it. |
+| 429 with no header → `retry_after is None` | Absent, not zero — zero reads as "retry immediately". |
+| 400/401/403/404 → `SourceError`, **not** transient | Our request was wrong and will be wrong next time. |
+| `NotFoundError` catchable as `SourceError` | The class hierarchy is part of the contract. |
+| Non-list work-list / non-object item → `SourceError` | Shape guards fail at the boundary instead of five steps later. |
+| The configured timeout reaches `requests.get` | A request with no timeout can hang forever, and a hung activity is worse than a failed one. |
 
 ---
 
@@ -582,7 +609,10 @@ burning retries.
 │   ├── worker.py               # long-poll process, thread pool
 │   ├── schedules.py            # server-side schedules
 │   └── cli.py                  # the operator surface
-├── tests/test_workflows.py     # time-skipping env, activity doubles
+├── tests/
+│   ├── test_workflows.py       # time-skipping env, activity doubles
+│   └── test_hn.py              # the error taxonomy, requests.get stubbed
+├── .github/workflows/test.yml  # pytest on 3.11 + 3.13, ruff check
 ├── _data/                      # landed JSON (gitignored)
 └── _temporal/                  # dev server db + log (gitignored)
 ```

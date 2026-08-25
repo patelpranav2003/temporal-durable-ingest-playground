@@ -1,0 +1,52 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in pyproject.toml, and the current release.
+        python-version: ["3.11", "3.13"]
+
+    env:
+      # Both `uv sync` and `uv run` honour this, so the whole job uses one interpreter.
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        # --locked fails if uv.lock is out of date with pyproject.toml, rather than silently
+        # resolving something different from what was committed.
+        run: uv sync --locked --dev
+
+      - name: Run the tests
+        # No Temporal server and no network needed: the workflow tests use the SDK's own
+        # time-skipping environment with activity doubles, and the client tests stub requests.get.
+        run: uv run pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Ruff
+        # Lint only. `ruff format` is deliberately NOT enforced: the hand-wrapped argparse blocks
+        # and the aligned inline comments are part of what this repo is trying to teach, and the
+        # formatter would flatten them.
+        run: uvx ruff check .

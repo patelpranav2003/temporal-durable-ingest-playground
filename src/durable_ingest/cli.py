@@ -208,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130
-    except Exception as e:  # noqa: BLE001 — the CLI boundary; a traceback helps nobody here
+    except Exception as e:  # the CLI boundary; a traceback helps nobody here
         logging.getLogger("durable_ingest").error("%s: %s", type(e).__name__, e)
         if args.verbose:
             raise
